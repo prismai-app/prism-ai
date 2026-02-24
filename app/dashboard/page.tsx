@@ -39,7 +39,7 @@ export default function DashboardPage() {
         .from('profiles')
         .select('*')
         .eq('id', user.id)
-        .single()
+        .maybeSingle()
 
       if (error) {
         console.error('Profile load error:', error)
@@ -48,13 +48,18 @@ export default function DashboardPage() {
         return
       }
 
-      if (profileData) {
-        if (!profileData.onboarding_completed) {
-          router.push('/onboarding')
-          return
-        }
-        setProfile(profileData)
+      if (!profileData) {
+        // Profile doesn't exist, redirect to onboarding
+        router.push('/onboarding')
+        return
       }
+
+      if (!profileData.onboarding_completed) {
+        router.push('/onboarding')
+        return
+      }
+      
+      setProfile(profileData)
       
       setLoading(false)
     } catch (err) {
