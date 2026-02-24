@@ -141,7 +141,7 @@ export default function DashboardPage() {
         {/* Main Content Grid */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           {/* Lessons */}
-          <div className="bg-white rounded-lg border border-gray-200 p-6">
+          <a href="/lessons" className="bg-white rounded-lg border border-gray-200 p-6 hover:border-purple-300 hover:shadow-md transition-all block">
             <div className="flex items-center gap-2 mb-4">
               <span className="text-2xl">📚</span>
               <h2 className="text-xl font-semibold text-gray-900">Lessons</h2>
@@ -149,10 +149,10 @@ export default function DashboardPage() {
             <p className="text-gray-600 mb-4">
               Personalized AI lessons for your profession
             </p>
-            <div className="text-sm text-gray-500 italic">
-              Coming soon...
+            <div className="text-purple-600 font-semibold">
+              View Lessons →
             </div>
-          </div>
+          </a>
 
           {/* News Feed */}
           <div className="bg-white rounded-lg border border-gray-200 p-6">
