@@ -1,6 +1,11 @@
 // Seed initial lessons for each profession
 import { createClient } from '@supabase/supabase-js'
 import Anthropic from '@anthropic-ai/sdk'
+import * as dotenv from 'dotenv'
+import * as path from 'path'
+
+// Load environment variables from .env.local
+dotenv.config({ path: path.join(process.cwd(), '.env.local') })
 
 const supabase = createClient(
   process.env.NEXT_PUBLIC_SUPABASE_URL!,
@@ -127,7 +132,7 @@ Return ONLY valid JSON with this exact structure (no markdown, no code blocks):
 Make it genuinely useful and engaging for a ${professionLabels[profession]}.`
 
   const response = await anthropic.messages.create({
-    model: 'claude-3-5-sonnet-20241022',
+    model: 'claude-sonnet-4-5-20250929',
     max_tokens: 2048,
     messages: [{ role: 'user', content: prompt }],
   })
@@ -137,7 +142,15 @@ Make it genuinely useful and engaging for a ${professionLabels[profession]}.`
     throw new Error('Unexpected response type')
   }
 
-  return JSON.parse(content.text)
+  // Strip markdown code blocks if present
+  let jsonText = content.text.trim()
+  if (jsonText.startsWith('```json')) {
+    jsonText = jsonText.replace(/^```json\n/, '').replace(/\n```$/, '')
+  } else if (jsonText.startsWith('```')) {
+    jsonText = jsonText.replace(/^```\n/, '').replace(/\n```$/, '')
+  }
+
+  return JSON.parse(jsonText)
 }
 
 async function seedLessons() {
