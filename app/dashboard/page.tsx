@@ -18,36 +18,49 @@ export default function DashboardPage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [userEmail, setUserEmail] = useState('')
+  const [error, setError] = useState('')
 
   useEffect(() => {
     loadProfile()
   }, [])
 
   async function loadProfile() {
-    const { data: { user } } = await supabase.auth.getUser()
-    
-    if (!user) {
-      router.push('/login')
-      return
-    }
-
-    setUserEmail(user.email || '')
-
-    const { data: profileData, error } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single()
-
-    if (profileData) {
-      if (!profileData.onboarding_completed) {
-        router.push('/onboarding')
+    try {
+      const { data: { user } } = await supabase.auth.getUser()
+      
+      if (!user) {
+        router.push('/login')
         return
       }
-      setProfile(profileData)
+
+      setUserEmail(user.email || '')
+
+      const { data: profileData, error } = await supabase
+        .from('profiles')
+        .select('*')
+        .eq('id', user.id)
+        .single()
+
+      if (error) {
+        console.error('Profile load error:', error)
+        setError(`Error loading profile: ${error.message}`)
+        setLoading(false)
+        return
+      }
+
+      if (profileData) {
+        if (!profileData.onboarding_completed) {
+          router.push('/onboarding')
+          return
+        }
+        setProfile(profileData)
+      }
+      
+      setLoading(false)
+    } catch (err) {
+      console.error('Dashboard error:', err)
+      setLoading(false)
     }
-    
-    setLoading(false)
   }
 
   async function handleSignOut() {
@@ -63,8 +76,38 @@ export default function DashboardPage() {
     )
   }
 
+  if (error) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="max-w-md text-center">
+          <h2 className="text-xl font-bold text-red-600 mb-4">Error</h2>
+          <p className="text-gray-700 mb-4">{error}</p>
+          <button
+            onClick={() => router.push('/onboarding')}
+            className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+          >
+            Complete Onboarding
+          </button>
+        </div>
+      </div>
+    )
+  }
+
   if (!profile) {
-    return null
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="max-w-md text-center">
+          <h2 className="text-xl font-bold text-gray-900 mb-4">No Profile Found</h2>
+          <p className="text-gray-700 mb-4">Please complete onboarding to continue.</p>
+          <button
+            onClick={() => router.push('/onboarding')}
+            className="px-6 py-3 bg-purple-600 text-white rounded-lg hover:bg-purple-700"
+          >
+            Start Onboarding
+          </button>
+        </div>
+      </div>
+    )
   }
 
   const professionLabels: { [key: string]: string } = {
