@@ -43,7 +43,7 @@ export default function OnboardingPage() {
       .from('profiles')
       .select('onboarding_completed')
       .eq('id', user.id)
-      .single()
+      .maybeSingle()
 
     if (profile?.onboarding_completed) {
       router.push('/dashboard')
@@ -117,7 +117,11 @@ export default function OnboardingPage() {
       console.error('Onboarding save error:', error)
       alert(`Error saving profile: ${error.message}`)
     } else {
-      router.push('/dashboard')
+      console.log('Profile saved successfully, redirecting to dashboard...')
+      // Add a small delay to ensure database write completes
+      setTimeout(() => {
+        router.push('/dashboard')
+      }, 500)
     }
   }
 
