@@ -76,18 +76,47 @@ export default function OnboardingPage() {
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
-    const { error } = await supabase
+    // First, check if profile exists
+    const { data: existingProfile } = await supabase
       .from('profiles')
-      .update({
-        profession: selectedProfession,
-        education_level: educationLevel,
-        experience_level: experienceLevel,
-        goals: selectedGoals,
-        onboarding_completed: true
-      })
+      .select('id')
       .eq('id', user.id)
+      .maybeSingle()
 
-    if (!error) {
+    let error
+
+    if (!existingProfile) {
+      // Profile doesn't exist, insert it
+      const { error: insertError } = await supabase
+        .from('profiles')
+        .insert({
+          id: user.id,
+          profession: selectedProfession,
+          education_level: educationLevel,
+          experience_level: experienceLevel,
+          goals: selectedGoals,
+          onboarding_completed: true
+        })
+      error = insertError
+    } else {
+      // Profile exists, update it
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          profession: selectedProfession,
+          education_level: educationLevel,
+          experience_level: experienceLevel,
+          goals: selectedGoals,
+          onboarding_completed: true
+        })
+        .eq('id', user.id)
+      error = updateError
+    }
+
+    if (error) {
+      console.error('Onboarding save error:', error)
+      alert(`Error saving profile: ${error.message}`)
+    } else {
       router.push('/dashboard')
     }
   }
