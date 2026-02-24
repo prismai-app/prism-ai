@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { supabase } from '../lib/supabase'
 
 interface Profile {
   profession: string
@@ -15,7 +15,6 @@ interface Profile {
 
 export default function DashboardPage() {
   const router = useRouter()
-  const supabase = createClientComponentClient()
   const [profile, setProfile] = useState<Profile | null>(null)
   const [loading, setLoading] = useState(true)
   const [userEmail, setUserEmail] = useState('')

@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { useRouter } from 'next/navigation'
-import { createClientComponentClient } from '@supabase/auth-helpers-nextjs'
+import { supabase } from '../lib/supabase'
 
 type Step = 'profession' | 'education' | 'experience' | 'goals'
 
@@ -16,7 +16,6 @@ interface Profession {
 
 export default function OnboardingPage() {
   const router = useRouter()
-  const supabase = createClientComponentClient()
   
   const [currentStep, setCurrentStep] = useState<Step>('profession')
   const [professions, setProfessions] = useState<Profession[]>([])
