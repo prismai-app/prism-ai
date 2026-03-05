@@ -23,6 +23,7 @@ export default function ChatPage() {
   const [limitReached, setLimitReached] = useState(false)
   const [profession, setProfession] = useState('')
   const [error, setError] = useState('')
+  const [conversationId, setConversationId] = useState<string | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLTextAreaElement>(null)
 
@@ -56,7 +57,7 @@ export default function ChatPage() {
 
     const { data: profile } = await supabase
       .from('profiles')
-      .select('profession, subscription_tier, daily_chat_count, last_chat_date')
+      .select('profession, subscription_tier, daily_chat_count, daily_chat_reset_at')
       .eq('id', user.id)
       .single()
 
@@ -68,31 +69,44 @@ export default function ChatPage() {
     setProfession(profile.profession)
 
     const today = new Date().toISOString().split('T')[0]
-    const count = profile.last_chat_date === today ? profile.daily_chat_count : 0
+    const lastReset = profile.daily_chat_reset_at ? new Date(profile.daily_chat_reset_at).toISOString().split('T')[0] : ''
+    const count = lastReset === today ? (profile.daily_chat_count || 0) : 0
     const limit = profile.subscription_tier === 'pro' ? 999 : 30
     setChatCount(count)
     setChatLimit(limit)
     setLimitReached(count >= limit)
 
-    // Load recent chat history from DB
-    const { data: history } = await supabase
-      .from('chat_messages')
-      .select('id, role, content, created_at')
+    // Load the most recent conversation
+    const { data: conversations } = await supabase
+      .from('chatbot_conversations')
+      .select('id')
       .eq('user_id', user.id)
-      .order('created_at', { ascending: true })
-      .limit(50)
+      .order('updated_at', { ascending: false })
+      .limit(1)
 
-    if (history && history.length > 0) {
-      setMessages(history.map(msg => ({
-        id: msg.id,
-        role: msg.role as 'user' | 'assistant',
-        content: msg.content,
-        timestamp: new Date(msg.created_at),
-      })))
+    if (conversations && conversations.length > 0) {
+      const convoId = conversations[0].id
+      setConversationId(convoId)
+
+      // Load messages from this conversation
+      const { data: history } = await supabase
+        .from('chatbot_messages')
+        .select('id, role, content, created_at')
+        .eq('conversation_id', convoId)
+        .order('created_at', { ascending: true })
+        .limit(50)
+
+      if (history && history.length > 0) {
+        setMessages(history.map(msg => ({
+          id: msg.id,
+          role: msg.role as 'user' | 'assistant',
+          content: msg.content,
+          timestamp: new Date(msg.created_at),
+        })))
+      }
     }
 
     setPageLoading(false)
-    // Focus the input after loading
     setTimeout(() => inputRef.current?.focus(), 100)
   }
 
@@ -105,7 +119,6 @@ export default function ChatPage() {
     setInput('')
     setError('')
 
-    // Add user message to UI immediately
     const userMsg: Message = {
       id: `temp-${Date.now()}`,
       role: 'user',
@@ -116,18 +129,11 @@ export default function ChatPage() {
     setLoading(true)
 
     try {
-      // Get the current session token
       const { data: { session } } = await supabase.auth.getSession()
       if (!session) {
         router.push('/login')
         return
       }
-
-      // Build conversation history for context
-      const conversationHistory = messages.slice(-10).map(m => ({
-        role: m.role,
-        content: m.content,
-      }))
 
       const res = await fetch('/api/chat', {
         method: 'POST',
@@ -137,7 +143,7 @@ export default function ChatPage() {
         },
         body: JSON.stringify({
           message: trimmed,
-          conversationHistory,
+          conversationId,
         }),
       })
 
@@ -154,7 +160,11 @@ export default function ChatPage() {
         return
       }
 
-      // Add assistant message
+      // Update conversation ID if this was a new conversation
+      if (data.conversationId && !conversationId) {
+        setConversationId(data.conversationId)
+      }
+
       const assistantMsg: Message = {
         id: `temp-${Date.now()}-reply`,
         role: 'assistant',
@@ -184,19 +194,28 @@ export default function ChatPage() {
     }
   }
 
+  async function startNewChat() {
+    setConversationId(null)
+    setMessages([])
+    setError('')
+    setTimeout(() => inputRef.current?.focus(), 100)
+  }
+
   async function clearHistory() {
-    const confirmed = window.confirm('Clear your chat history? This cannot be undone.')
+    const confirmed = window.confirm('Clear ALL your chat history? This cannot be undone.')
     if (!confirmed) return
 
     const { data: { user } } = await supabase.auth.getUser()
     if (!user) return
 
+    // Delete all conversations and messages (cascade will handle messages)
     await supabase
-      .from('chat_messages')
+      .from('chatbot_conversations')
       .delete()
       .eq('user_id', user.id)
 
     setMessages([])
+    setConversationId(null)
   }
 
   if (pageLoading) {
@@ -214,7 +233,7 @@ export default function ChatPage() {
         <div className="max-w-4xl mx-auto px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <Link href="/dashboard" className="text-gray-500 hover:text-gray-700">
-              ← 
+              ←
             </Link>
             <div>
               <h1 className="font-bold text-gray-900 flex items-center gap-2">
@@ -229,11 +248,18 @@ export default function ChatPage() {
             <span className="text-xs text-gray-500">
               {chatCount}/{chatLimit === 999 ? '∞' : chatLimit} today
             </span>
+            <button
+              onClick={startNewChat}
+              className="text-xs text-purple-600 hover:text-purple-800 font-medium transition"
+              title="New conversation"
+            >
+              + New
+            </button>
             {messages.length > 0 && (
               <button
                 onClick={clearHistory}
                 className="text-xs text-gray-400 hover:text-red-500 transition"
-                title="Clear history"
+                title="Clear all history"
               >
                 🗑️
               </button>
@@ -266,7 +292,10 @@ export default function ChatPage() {
                     key={suggestion}
                     onClick={() => {
                       setInput(suggestion)
-                      setTimeout(() => sendMessage(), 50)
+                      setTimeout(() => {
+                        const form = document.querySelector('form')
+                        form?.requestSubmit()
+                      }, 50)
                     }}
                     className="px-4 py-2 bg-white border border-gray-200 rounded-full text-sm text-gray-700 hover:border-purple-300 hover:bg-purple-50 transition"
                   >

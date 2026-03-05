@@ -12,7 +12,7 @@ const supabase = createClient(
 )
 
 const DAILY_CHAT_LIMIT_FREE = 30
-const DAILY_CHAT_LIMIT_PRO = 999 // effectively unlimited
+const DAILY_CHAT_LIMIT_PRO = 999
 
 const professionContexts: { [key: string]: string } = {
   'k12-educator': 'K-12 educator (teacher). Use classroom, lesson planning, student engagement, and education examples. Relate AI concepts to teaching.',
@@ -24,15 +24,12 @@ const professionContexts: { [key: string]: string } = {
 
 export async function POST(request: NextRequest) {
   try {
-    // Get the auth token from the request
     const authHeader = request.headers.get('authorization')
     if (!authHeader) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
     }
 
     const token = authHeader.replace('Bearer ', '')
-
-    // Verify the user
     const { data: { user }, error: authError } = await supabase.auth.getUser(token)
     if (authError || !user) {
       return NextResponse.json({ error: 'Invalid session' }, { status: 401 })
@@ -41,7 +38,7 @@ export async function POST(request: NextRequest) {
     // Get user profile
     const { data: profile } = await supabase
       .from('profiles')
-      .select('profession, experience_level, subscription_tier, daily_chat_count, last_chat_date')
+      .select('profession, experience_level, subscription_tier, daily_chat_count, daily_chat_reset_at')
       .eq('id', user.id)
       .single()
 
@@ -49,10 +46,12 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Profile not found' }, { status: 404 })
     }
 
-    // Check daily limit
-    const today = new Date().toISOString().split('T')[0]
+    // Check daily limit — reset if new day
+    const now = new Date()
+    const lastReset = profile.daily_chat_reset_at ? new Date(profile.daily_chat_reset_at) : new Date(0)
+    const isNewDay = now.toISOString().split('T')[0] !== lastReset.toISOString().split('T')[0]
     const limit = profile.subscription_tier === 'pro' ? DAILY_CHAT_LIMIT_PRO : DAILY_CHAT_LIMIT_FREE
-    const chatCount = profile.last_chat_date === today ? profile.daily_chat_count : 0
+    const chatCount = isNewDay ? 0 : (profile.daily_chat_count || 0)
 
     if (chatCount >= limit) {
       return NextResponse.json({
@@ -61,8 +60,7 @@ export async function POST(request: NextRequest) {
       }, { status: 429 })
     }
 
-    // Parse the request body
-    const { message, conversationHistory } = await request.json()
+    const { message, conversationId } = await request.json()
 
     if (!message || typeof message !== 'string' || message.trim().length === 0) {
       return NextResponse.json({ error: 'Message is required' }, { status: 400 })
@@ -72,7 +70,37 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Message too long (max 2000 characters)' }, { status: 400 })
     }
 
-    // Build the system prompt
+    // Get or create conversation
+    let activeConversationId = conversationId
+
+    if (!activeConversationId) {
+      const { data: newConvo, error: convoError } = await supabase
+        .from('chatbot_conversations')
+        .insert({
+          user_id: user.id,
+          title: message.substring(0, 100),
+          message_count: 0,
+        })
+        .select('id')
+        .single()
+
+      if (convoError || !newConvo) {
+        console.error('Error creating conversation:', convoError)
+        return NextResponse.json({ error: 'Failed to create conversation' }, { status: 500 })
+      }
+
+      activeConversationId = newConvo.id
+    }
+
+    // Load recent messages from this conversation for context
+    const { data: recentMessages } = await supabase
+      .from('chatbot_messages')
+      .select('role, content')
+      .eq('conversation_id', activeConversationId)
+      .order('created_at', { ascending: true })
+      .limit(20)
+
+    // Build system prompt
     const professionContext = professionContexts[profile.profession] || 'professional'
     const experienceDesc = profile.experience_level === 'beginner'
       ? 'They are new to AI — explain things simply, no jargon.'
@@ -94,22 +122,16 @@ Guidelines:
 - Suggest practical next steps they can try
 - Use analogies from their field to explain complex concepts`
 
-    // Build messages array (include recent conversation history)
+    // Build messages array
     const messages: { role: 'user' | 'assistant'; content: string }[] = []
-
-    if (conversationHistory && Array.isArray(conversationHistory)) {
-      // Include last 10 messages for context
-      const recentHistory = conversationHistory.slice(-10)
-      for (const msg of recentHistory) {
-        if (msg.role === 'user' || msg.role === 'assistant') {
-          messages.push({ role: msg.role, content: msg.content })
-        }
+    if (recentMessages) {
+      for (const msg of recentMessages) {
+        messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content })
       }
     }
-
     messages.push({ role: 'user', content: message })
 
-    // Call Claude Haiku (cheap and fast)
+    // Call Claude Haiku
     const response = await anthropic.messages.create({
       model: 'claude-3-5-haiku-20241022',
       max_tokens: 1024,
@@ -117,43 +139,54 @@ Guidelines:
       messages,
     })
 
-    const assistantMessage = response.content[0]
-    if (assistantMessage.type !== 'text') {
+    const assistantContent = response.content[0]
+    if (assistantContent.type !== 'text') {
       throw new Error('Unexpected response type')
     }
 
-    // Save both messages to the database
+    // Save both messages
     const { error: saveError } = await supabase
-      .from('chat_messages')
+      .from('chatbot_messages')
       .insert([
         {
+          conversation_id: activeConversationId,
           user_id: user.id,
           role: 'user',
           content: message,
         },
         {
+          conversation_id: activeConversationId,
           user_id: user.id,
           role: 'assistant',
-          content: assistantMessage.text,
+          content: assistantContent.text,
         }
       ])
 
     if (saveError) {
-      console.error('Error saving chat messages:', saveError)
-      // Don't fail the request — the user still gets their response
+      console.error('Error saving messages:', saveError)
     }
+
+    // Update conversation message count
+    await supabase
+      .from('chatbot_conversations')
+      .update({
+        message_count: (recentMessages?.length || 0) + 2,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', activeConversationId)
 
     // Update daily chat count
     await supabase
       .from('profiles')
       .update({
         daily_chat_count: chatCount + 1,
-        last_chat_date: today,
+        daily_chat_reset_at: isNewDay ? now.toISOString() : profile.daily_chat_reset_at,
       })
       .eq('id', user.id)
 
     return NextResponse.json({
-      message: assistantMessage.text,
+      message: assistantContent.text,
+      conversationId: activeConversationId,
       chatCount: chatCount + 1,
       chatLimit: limit,
     })
