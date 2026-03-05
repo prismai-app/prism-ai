@@ -1,9 +1,11 @@
 // Claude API client for lesson generation
 import Anthropic from '@anthropic-ai/sdk'
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
-})
+function getAnthropicClient() {
+  return new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY || '',
+  })
+}
 
 export interface LessonContent {
   title: string
@@ -22,6 +24,8 @@ export async function generateLesson(
   topic: string,
   difficulty: 'beginner' | 'intermediate' | 'advanced'
 ): Promise<LessonContent> {
+  const anthropic = getAnthropicClient()
+
   const prompt = `You are creating an AI literacy lesson for a ${profession}.
 
 Topic: ${topic}

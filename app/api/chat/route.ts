@@ -2,14 +2,18 @@ import { NextRequest, NextResponse } from 'next/server'
 import Anthropic from '@anthropic-ai/sdk'
 import { createClient } from '@supabase/supabase-js'
 
-const anthropic = new Anthropic({
-  apiKey: process.env.ANTHROPIC_API_KEY || '',
-})
+function getAnthropicClient() {
+  return new Anthropic({
+    apiKey: process.env.ANTHROPIC_API_KEY || '',
+  })
+}
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-)
+function getSupabaseAdmin() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  )
+}
 
 const DAILY_CHAT_LIMIT_FREE = 30
 const DAILY_CHAT_LIMIT_PRO = 999
@@ -24,6 +28,9 @@ const professionContexts: { [key: string]: string } = {
 
 export async function POST(request: NextRequest) {
   try {
+    const supabase = getSupabaseAdmin()
+    const anthropic = getAnthropicClient()
+
     const authHeader = request.headers.get('authorization')
     if (!authHeader) {
       return NextResponse.json({ error: 'Not authenticated' }, { status: 401 })
@@ -123,20 +130,20 @@ Guidelines:
 - Use analogies from their field to explain complex concepts`
 
     // Build messages array
-    const messages: { role: 'user' | 'assistant'; content: string }[] = []
+    const chatMessages: { role: 'user' | 'assistant'; content: string }[] = []
     if (recentMessages) {
       for (const msg of recentMessages) {
-        messages.push({ role: msg.role as 'user' | 'assistant', content: msg.content })
+        chatMessages.push({ role: msg.role as 'user' | 'assistant', content: msg.content })
       }
     }
-    messages.push({ role: 'user', content: message })
+    chatMessages.push({ role: 'user', content: message })
 
     // Call Claude Haiku
     const response = await anthropic.messages.create({
       model: 'claude-3-5-haiku-20241022',
       max_tokens: 1024,
       system: systemPrompt,
-      messages,
+      messages: chatMessages,
     })
 
     const assistantContent = response.content[0]
